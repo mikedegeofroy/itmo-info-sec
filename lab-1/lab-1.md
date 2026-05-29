@@ -1,26 +1,95 @@
 # Labwork 1
 Де Джофрой Мишель М3407
 
-0. Окружение
+## 0. Окружение
 
 Поднял в докере сеть lab-1-network, в ней 2 контейнера
 
 Attacker - образ кали линукса с nmap и tcpdump
 Target - бубунта со snort, ssh, aparche2, vsftpd (чтобы nmap-у было что посмотреть)
 
-(см. docker compose)
+см. [docker compose](./docker-compose.yml)
 
-1. Скан
+## 1. Скан
 
 Запкстил `tcpdump -i eth0 -w /tmp/scan.pcap &` в фоновом режиме. Запустил `nmap -O 172.30.0.20`. Завершил принудительно `tcpdump`. И скопировал в текущую директорию. `docker cp attacker:/tmp/scan.pcap ./scan.pcap`.
 
-2. Открываем дамп в Wireshark
+![](./images/commands.png)
 
-Замечаем TCP SYN пробы на разные порты.
-Замечаем ICMP эхо запросы
-Замечаем TCP пакеты
+## 2. Открываем дамп в Wireshark
 
-Ответы на вопросы:
+Изначально видны ARP для получения MAC-адреса цели. Запрашиваем подтверждение что жертва существует в сети и отвечает 
+
+![](./images/arp.jpeg)
+
+Потом выполняем проверку open/closed портов для OS Detection. (Для детектирования OS нам нужен хотя бы 1 закрытый и 1 открытый порт)
+
+![](./images/arp.jpeg)
+
+Замечаем TCP SYN пробы на разные порты. Ищеться как минимум 1 порт, чтобы провести ОС Detection.
+
+![](./images/icmp-tcp-udp.jpeg)
+
+Замечаем ICMP эхо запросы и TCP пакеты
+
+## 3. Как nmap определяет ОС
+
+Определение OC происходит вот так:
+
+Nmap шлёт целе пробы (TCP, UDP, ICMP) и смотрит как её стек на них отвечает. Каждая ОС отвечает чуток по-своему — по этим ответам (TTL, размер окна, флаги, IP ID и т.д.) nmap собирает "отпечаток" и сравнивает его со своей базой, выдавая самое близкое совпадение. Для этого нужен хотя бы 1 открытый и 1 закрытый порт.
+
+## 4. Настройка snort и написание сигнатур для определения аттак
+
+Ставлю snort на target и прописываю свою сеть как `HOME_NET`:
+
+```bash
+apt-get install -y snort
+# в /etc/snort/snort.conf
+ipvar HOME_NET 172.30.0.0/24
+```
+
+Свои правила пишу в `/etc/snort/rules/local.rules`. Сканер палится необычными пакетами, так что ловим их по флагам и по количеству:
+
+```
+# куча SYN с одного ip за короткое время = SYN скан
+alert tcp any any -> $HOME_NET any (msg:"NMAP SYN scan"; flags:S; threshold:type both, track by_src, count 20, seconds 5; sid:1000001; rev:1;)
+
+# пакет вообще без флагов = NULL скан
+alert tcp any any -> $HOME_NET any (msg:"NMAP NULL scan"; flags:0; sid:1000002; rev:1;)
+
+# FIN+PSH+URG = XMAS скан (такие же кривые пакеты шлёт OS detection)
+alert tcp any any -> $HOME_NET any (msg:"NMAP XMAS scan"; flags:FPU; sid:1000003; rev:1;)
+
+# nmap при OS detection шлёт ICMP echo с кодом 9 (обычный ping шлёт код 0)
+alert icmp any any -> $HOME_NET any (msg:"NMAP ICMP OS probe"; itype:8; icode:9; sid:1000004; rev:2;)
+```
+
+Запускаю snort с выводом алертов в консоль:
+
+```bash
+snort -A console -q -c /etc/snort/snort.conf -i eth0
+```
+
+Теперь когда с attacker-а снова запускаю `nmap -O 172.30.0.20`, snort палит скан и сыпет алертами:
+
+![](./images/snort.jpeg)
+
+## 5. Проверить, что snort не срабатывает на обычный трафик
+
+С attacker-а гоняю обычный трафик на target:
+
+```bash
+ping target
+curl http://target
+```
+
+![](./images/test.jpeg)
+
+Snort молчит — правила заточены под аномалии (пачка SYN, кривые флаги, ICMP с кодом 9), а нормальные пакеты под них не подходят.
+
+Был нюанс: первая версия ICMP-правила (просто `itype:8`) ловила и обычный `ping`, потому что ping — это и есть ICMP echo request, и по типу его от nmap никак не отличить. Добавил `icode:9` (nmap в OS detection шлёт echo с кодом 9, а обычный ping — с кодом 0).
+
+## 6. Ответы на вопросы
 
 1. В чём разница между активным и пассивным сканированием сети?
 
@@ -48,7 +117,7 @@ Target - бубунта со snort, ssh, aparche2, vsftpd (чтобы nmap-у б
 Ответ:
 Основной принцип работы - анализ трафика и активности в сети на предмет потенциальных угроз (сравнивает характеристики трафика с базой известных сигнатур атак)
 
-6. Какие различия между IDS и IPS? В каком случае применяются данные средства?
+6. Какие различия между IDS (Intrusion Detection System) и IPS (Intrusion Prevention System)? В каком случае применяются данные средства?
 
 Если кратко, то IDS только уведомляет об угрозе, а IPS способна блокировать угрозы автоматически
 
