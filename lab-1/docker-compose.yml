@@ -1,0 +1,44 @@
+services:
+  attacker:
+    image: kalilinux/kali-rolling
+    container_name: attacker
+    stdin_open: true
+    tty: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    command: >
+      bash -c "apt-get update && apt-get install -y nmap tcpdump && sleep infinity"
+    networks:
+      lab-1-network:
+        ipv4_address: 172.30.0.10
+
+  target:
+    image: ubuntu:22.04
+    container_name: target
+    stdin_open: true
+    tty: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+    command: >
+      bash -c "
+        apt-get update &&
+        apt-get install -y openssh-server apache2 vsftpd net-tools &&
+        service ssh start &&
+        service apache2 start &&
+        service vsftpd start &&
+        sleep infinity
+      "
+    networks:
+      lab-1-network:
+        ipv4_address: 172.30.0.20
+
+networks:
+  lab-1-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
